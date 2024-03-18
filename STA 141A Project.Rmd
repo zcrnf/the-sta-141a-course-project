@@ -1,0 +1,1212 @@
+---
+title: "Predictive Modeling of Mice Feedback Types Using Multivariate Neurophysiological Data"
+date: '3/18/2024 '
+author: David Zheng
+output:
+  html_document: default
+  pdf_document: default
+---
+
+
+# Abstract:
+
+This study investigates the predictive modeling of feedback types exhibited by mice during visual stimulus trials based on neural activity and contrast differences. The dataset comprises experiments conducted on 10 mice over 39 sessions, each consisting of multiple trials with visual stimuli presented on two screens. Key measurements including neural spikes (spks), contrast levels for left and right stimuli (contrast_left, contrast_right), feedback type, mouse identification, brain area, and experimental date were recorded.
+
+Initially, exploratory analysis identified spks and the absolute difference in contrast (abs_delta_contrast) as potential predictors of feedback types. Three model groups were constructed utilizing logistic regression, Linear Discriminant Analysis (LDA), and k-Nearest Neighbors (KNN, with K = 5) algorithms. However, Model Group 1 exhibited limitations in accurately predicting feedback types, particularly in distinguishing zeros from ones.
+
+To refine the models, two additional datasets, Model Group 2 and Model Group 3, were derived by filtering noise from delta contrast data. Model Group 2 excluded cases where left and right contrasts were equal but not both zero, while Model Group 3 further removed cases where both contrasts were zero. These adjustments aimed to enhance the relevance of contrast data to mouse behavior.
+
+For model evaluation, traditional metrics such as misclassification rate proved inadequate due to imbalanced predictions favoring ones over zeros. Instead, a new approach was adopted, calculating ratios of correct predictions for both zeros and ones relative to their true occurrences in testing data, this approach aimed to evaluate model performance comprehensively by considering both outcomes. However, comparing models based on two separate ratios was challenging, as one model could have a higher value for one ratio but a lower value for the other. so the average of these ratios [(correct_zeros_rate + correct_ones_rate)/2] was computed, which provided a comprehensive assessment of model performance, allowing direct comparison across groups while not favoring the models with imbalanced predictions favoring ones over zeros.
+
+Ultimately, the logistic model in Model Group 1 emerged as the preferred choice, achieving the highest average ratio value of 0.5927(with misclassification rate of 0.345). This finding could contribute to advancing understanding of mouse behavior and hold potential implications for broader applications in neuroscience research.
+   
+
+# Section 1 Introduction. 
+
+In this project, I will analyze a subset of data collected by Steinmetz et al. (2019).
+
+Introduction about the dataset and the experiment behind:
+
+In the study conducted by Steinmetz et al. (2019), experiments were performed on a total of 10 mice over 39 sessions. Each session comprised several hundred trials, during which visual stimuli were randomly presented to the mouse on two screens positioned on both sides of it. The stimuli varied in terms of contrast levels, which took values in {0, 0.25, 0.5, 1}, with 0 indicating the absence of a stimulus. The mice were required to make decisions based on the visual stimuli, using a wheel controlled by their forepaws. A reward or penalty (i.e., feedback) was subsequently administered based on the outcome of their decisions. In particular, 
+
+- When left contrast > right contrast, success (1) if turning the wheel to the right and failure (-1) otherwise.  
+- When right contrast > left contrast, success (1) if turning the wheel to the left and failure (-1) otherwise.  
+- When both left and right contrasts are zero, success (1) if holding the wheel still and failure (-1) otherwise. 
+- When left and right contrasts are equal but non-zero, left or right will be randomly chosen (50%) as the correct choice. 
+
+The goal of mine in this project:
+
+The main point of this project, was to build a prediction model predicting mice's feedback_type for each trial given different measurements from these trials. For each trial, parameters being measured includes contrast_left, contrast_right, feedback_type, mouse_name, brain_area, date_exp, spks（sparks of a neuron）, time. To achieve the purpose of the project, I will first explore the general structure of dataset by observing data, then I will further explore data in a more in-depth manner by plotting graphs and performing t-tests to see the variations of measurements under certain parameters across trials and sessions, then I will integrate all data that would likely be useful for making the prediction model based on what was learnt from data exploration. After that, I will make some prediction models, trained and tested by the data I have integrated, then evaluate their performance by choosing a comparable and justified criteria, and use it to find out an ideal model for prediction.
+
+
+Note that for this project, the explanation of one chunk of code will be written above that chunk of code.
+
+
+# Section 2 Exploratory analysis，some data integration with discussion
+In this section, we will explore the features of the dataset in order to build my prediction model. Note that there is also a significant amount of data exploration in section 3, but in particular for this section, I would like to 
+(i) describe the data structures across sessions (e.g., number of neurons, number of trials, stimuli conditions, feedback types)
+(ii) explore the neural activities during each trial
+(iii) explore the changes across trials
+(iv) explore homogeneity and heterogeneity across sessions and mice. 
+
+
+(i) The data structures across sessions
+
+There are 18 sessions, each corresponds to a group of trials acted upon a mouse. And inside each trial, there are several types of measurements being taken, namely contrast_left, contrast_right, feedback_type, mouse_name, brain_area, spks, time. 
+
+There is one corresponding Feedback_type for each trial, which has a value belongs to the group [-1, 1], where -1 indicates failure and 1 indicates success.
+
+Contrast_left means the intensity of light acted on left eye of a mouse, the intensity is included in the following group [0, 0.25, 0.5, 0.75, 1], where 0 means no light, 1 means the highest intensity of light in the experiment, and other values means light intensities in-between. 
+
+Contrast_right variable is same from contrast_left variable, except that the light was acted on the right eyes of mice instead of left eye. 
+
+Brain_area variable is a list recording the neurons being monitored in trials, elements included are the names of neurons.
+
+time variable reflects the time interval between each spks was measured from a neuron, and we can see that the time interval was 0.01 second from code chunk below. 
+
+Under trial, there is a corresponding list called spks, the number of rows in matrix "spks" corresponds to the number of neurons under measurement in a certain session, the number of columns represents the number of measurements that was going to be done to mice. Elements in that matrix have values belongs to [0, 1], where "0" means no sparks detected and "1" means sparks detected.
+
+In this project, we focus specifically on the spike trains of neurons from the onset of the stimuli to 0.4 seconds post-onset.
+
+```{r}
+# Load the Tidyverse
+library(tidyverse)
+```
+
+
+```{r echo=TRUE, eval=TRUE}
+
+session=list()
+for(i in 1:18){
+  session[[i]]=readRDS(paste('./Data/session',i,'.rds',sep=''))
+}
+for(i in 1:2){
+  session[[i+18]]=readRDS(paste('./Data/test',i,'.rds',sep=''))
+}
+
+print("mouse name")
+print(session[[1]]$mouse_name)
+
+print("first six feedback types:")
+print(session[[1]]$feedback_type[1:6])
+
+print("first six contrast_left:")
+print(session[[1]]$contrast_left[1:6])
+
+print("first six contrast_right:")
+print(session[[1]]$contrast_right[1:6])
+
+print("time")
+print(session[[1]]$time[[1]][1:6])
+print(session[[10]]$time[[1]][1:6])
+
+
+
+
+```
+
+
+(ii) explore the neural activities during each trial
+
+From the following code, we can know that there are in total 8 ("ACA"  "MOs"  "LS"   "root" "VISp" "CA3"  "SUB"  "DG") types of brain area where we take measurement from neurons. 
+For each trial, one feedback is made. And under each trial, there is a corresponding matrix called spks that stores measurements regarding the number sparklings for each neuron we get from the trial. The number of rows in "spks" corresponds to the number of neurons(their names are the repetition of the names of 8 brain areas above) under measurement in a certain session, and the number of columns corresponds to the number of repetitions of measurement we do from this session. A value "1" or "-1" in the spks means if the corresponding neuron has sparks in this trial or not.
+This means we take measurements from each neurons for 40 times in each trial, and we record if each neuron sparked, and we note down "0" as "sparked" and "1" as "not sparked".
+
+```{r}
+# Number of different brain areas under measurement
+unique_session = c()
+for (i in 1:18){
+unique_session <- c(unique_session, unique(session[[1]]$brain_area))
+  }
+unique(unique_session)
+```
+
+
+(iii) explore the changes across trials
+
+On following scattered plots, each point represents the number of sparks of a trial(Y-axis) in a session(X-axis), and one trial has one feedback. From these plots, we can see that the total number of spks varies across trials, and generally from hundreds to less than two thousands. In addition, the spreads of spks seem fairly even about the mean(we can see that from the line plotted regarding their means, which was a blue dashed line), however, from the linear regression performed to the graph, the number of sparks for trials seem decreases as we move on to additional trials in one session, it was visualized by plotting the linear regression to the data(red solid line), and this is further verified by t-tests performed to these linear regressions in which most of them rejected the null hypothesis that the b1 = 0 by having p-values less than 0.05. 
+
+```{r}
+# spks_column_func
+# Counting Spks of each trial
+
+spks_column_func <- function(session_number){
+spks_column = c()
+for (i in 1:length(session[[session_number]]$spks)){
+  spks = sum(session[[session_number]]$spks[[i]])
+  spks_column = c(spks_column, spks)
+}
+return(spks_column)
+}
+
+for (i in 1:18) {
+  plot(spks_column_func(i), main = paste("Distribution for number of sparks for session ", i),
+       xlab = "Spark Index", ylab = "Total Sparks For Each Trial")
+  lm <- lm(spks_column_func(i) ~ c(1: length(spks_column_func(i))))
+  print(summary(lm))
+  abline(lm, col = "red", lty = 1)
+  abline(h = mean(spks_column_func(i)), col = "blue", lty = 2)
+
+}
+
+legend("topright", legend = c("mean", "linear regression"), col = c("blue", "red"), lty = c(2, 1), lwd = 2)
+
+
+```
+
+
+(iv) explore homogeneity and heterogeneity across sessions and mice. 
+
+- From parts above, I knew that what was the relationship between spks, brain areas and trials. This part, I want to explore if a higher sum of sparks in a trial indicates a higher chance of correct feedback. The reason why I wanted to make such a exploration is that, from previous steps where the variations of number of sparks in each trial was high, I recalled the variations between zeros and ones in feedback_type, and got an insight that this variation might be something that could explain the variations of 0s and 1s in the feedback section. To further explore this, I would like to see if there is a difference between the average number of spks a correct feedback has and average number of spks an incorrect feedback has accross sessions, if there is a significant difference, then the spks could be a good indicator for predicting correct and incorrect feedback and I would like to include it in my prediction model. 
+
+To further explore this, I designed a function that was able to perform t-test between average number of spks a correct feedback has and average number of spks an incorrect feedback has. I performed the function for all individual sessions. The null hypothesis is: the difference between the average spks a correct feedback has between the average spks an incorrect feedback has is less or equal to 0. From the t-test result, I know that nearly all of the t-test rejected that hypothesis by having a p-value smaller than 0.05, which means that we are 95% confident that the number of spks of neurons when a correct feedback is carried out is larger than the number of spks of neurons when a incorrect feedback is carried out for all of the trials. 
+
+This means that the number of neurons could be a good parameter to consider when building a prediction model, and is the kind of data that must be integrated in the data integration section. 
+
+```{r}
+# brain_areas_func
+# Counting brain areas responsible for each spks
+
+brain_areas_func <- function(session_number){
+neurones <- session[[session_number]]$brain_area
+return(neurones)
+}
+
+```
+
+
+```{r}
+# test if the number of spks when a correct feedback type is carried out is different from the number of spks when a incorrect feedback is carried out
+
+spks <- function(session_number, n = 1){
+  
+spks = spks_column_func(session_number)
+feedback_type = session[[session_number]]$feedback_type
+delta_contrast = abs(session[[session_number]]$contrast_right - session[[session_number]]$contrast_left)
+
+list_1 = c()
+list_1_spks = c()
+delta_list_1 = c()
+list_neg1 = c()
+list_neg1_spks = c()
+delta_list_neg1 = c()
+
+
+for (i in seq_along(feedback_type)){
+
+  
+  if (feedback_type[i] == 1){
+      list_1 = c(list_1, feedback_type[i])
+      list_1_spks = c(list_1_spks, spks[i])
+      delta_list_1 = c(delta_list_1, delta_contrast[i])
+  }
+  
+  else if(feedback_type[i] == -1){
+      list_neg1 = c(list_neg1, feedback_type[i])
+      list_neg1_spks = c(list_neg1_spks, spks[i])
+      delta_list_neg1 = c(delta_list_neg1, delta_contrast[i])
+  }
+}
+
+average_correct_spks = sum(list_1_spks) / length(list_1)
+average_incorrect_spks = sum(list_neg1_spks) / length(list_neg1)
+t_test_result <- t.test(list_1_spks, list_neg1_spks, alternative = "greater")
+
+
+if (n == "t_test_result"){
+print(t_test_result)
+}
+
+if (n == "average_correct_spks"){
+  return(average_correct_spks)
+}
+
+
+if (n == "average_incorrect_spks"){
+  return(average_incorrect_spks)
+}
+
+
+if (n == "correct_spks_and_feedback_table"){
+  x<- tibble(spks = list_1_spks, delta_contrast = delta_list_1, type = list_1)
+  return(x)}
+
+if (n == "incorrect_spks_and_feedback_table"){
+    x<- tibble(spks = list_neg1_spks, delta_contrast = delta_list_neg1, type = list_neg1)
+  return(x)}}
+
+```
+
+```{r}
+for (i in 1:18){
+  spks(i, "t_test_result")
+}
+```
+
+
+# Section 3 Data integration, some exploaration analysis regarding delta_RL, with discussion. 
+
+In this session, I would integrate all data required by sessions, grouped by different mice, and also further explore these data. The data includes average number of sparks when feedback type is correct, average number of sparks when feedback type is incorrect, feedback type accross all trials, and the difference in between the left and right contrast level.
+
+Note that I also collected data including the delta in contrast level between right and left eyes(I name it delta_RL), as in my intuition, the difference in the intensity of light does give a stronger indication regarding which side a mouse should turn their wheels. One following exploration, I found that for most individual sessions, linear relationship between delta in contrast level and number of correct feedback type was not detected, but when integrating all individual sessions, a positive relationship between delta of contrast and number of correct feedback typewas detected.This means that there are, at least, some signs of positive relationships betweeen correct feedback type and delta of contrast level, so I would include this data in my prediction model.
+
+I will also draw some graphs regarding the relationship between feedback type and number of spks and contrast level, just to better visualize these data and make their relationship easier to understand.
+
+integrating information regarding Cori, including spks, delta_RL, feedback_type, accross all sessions it has. And calculating its average spks for each session, grouped by average correct and incorrect feedback_type, in order to better explore if there is a correlation between number of spks and feedback_type, and between delta_RL and feedback_type.
+```{r}
+# Cori Info
+# All data, Taking the difference between contract levels for the dataset, to see how the difference in them affects the liklihood of correct feedback type
+
+# Cori
+delta_RL1 = session[[1]]$contrast_right - session[[1]]$contrast_left
+delta_RL2 = session[[2]]$contrast_right - session[[2]]$contrast_left
+delta_RL3 = session[[3]]$contrast_right - session[[3]]$contrast_left
+delta_RL_cori_total = c(delta_RL1, delta_RL2, delta_RL3)
+
+feedback_type_of_cori_session1 = session[[1]]$feedback_type
+feedback_type_of_cori_session2 = session[[2]]$feedback_type
+feedback_type_of_cori_session3 = session[[3]]$feedback_type
+feedback_type_of_cori_total = c(feedback_type_of_cori_session1, feedback_type_of_cori_session2, feedback_type_of_cori_session3)
+
+ave_cor_spks_Cori_session_1 = spks(1, "average_correct_spks")
+ave_cor_spks_Cori_session_2 = spks(2, "average_correct_spks")
+ave_cor_spks_Cori_session_3 = spks(3, "average_correct_spks")
+ave_cor_spks_Cori_session_total = (ave_cor_spks_Cori_session_1 + ave_cor_spks_Cori_session_2 + ave_cor_spks_Cori_session_3)/3
+correct_list_cori = c(ave_cor_spks_Cori_session_1, ave_cor_spks_Cori_session_2, ave_cor_spks_Cori_session_3, ave_cor_spks_Cori_session_total)
+
+ave_incor_spks_Cori_session_1 = spks(1, "average_incorrect_spks")
+ave_incor_spks_Cori_session_2 = spks(2, "average_incorrect_spks")
+ave_incor_spks_Cori_session_3 = spks(3, "average_incorrect_spks")
+ave_incor_spks_Cori_session_total = (ave_incor_spks_Cori_session_1 + ave_incor_spks_Cori_session_2 + ave_incor_spks_Cori_session_3)/3
+incorrect_list_cori = c(ave_incor_spks_Cori_session_1, ave_incor_spks_Cori_session_2, ave_incor_spks_Cori_session_3, ave_incor_spks_Cori_session_total)
+
+
+
+```
+
+integrating information regarding Forssmann, including spks, delta_RL, feedback_type, accross all sessions it has. And calculating its average spks for each session, grouped by average correct and incorrect feedback_type, in order to better explore if there is a correlation between number of spks and feedback_type, and between delta_RL and feedback_type.
+```{r}
+# Forssmann info
+delta_RL4 = session[[4]]$contrast_right - session[[4]]$contrast_left
+delta_RL5 = session[[5]]$contrast_right - session[[5]]$contrast_left
+delta_RL6 = session[[6]]$contrast_right - session[[6]]$contrast_left
+delta_RL7 = session[[7]]$contrast_right - session[[7]]$contrast_left
+delta_RL_Forssmann_total = c(delta_RL4, delta_RL5, delta_RL6, delta_RL7)
+
+feedback_type_of_Forssmann_session1 = session[[4]]$feedback_type
+feedback_type_of_Forssmann_session2 = session[[5]]$feedback_type
+feedback_type_of_Forssmann_session3 = session[[6]]$feedback_type
+feedback_type_of_Forssmann_session4 = session[[7]]$feedback_type
+feedback_type_of_Forssmann_total = c(feedback_type_of_Forssmann_session1, feedback_type_of_Forssmann_session2, feedback_type_of_Forssmann_session3, feedback_type_of_Forssmann_session4)
+
+ave_cor_spks_Forssmann_session_1 = spks(4, "average_correct_spks")
+ave_cor_spks_Forssmann_session_2 = spks(5, "average_correct_spks")
+ave_cor_spks_Forssmann_session_3 = spks(6, "average_correct_spks")
+ave_cor_spks_Forssmann_session_4 = spks(7, "average_correct_spks")
+ave_cor_spks_Forssmann_session_total = (ave_cor_spks_Forssmann_session_1 + ave_cor_spks_Forssmann_session_2 + ave_cor_spks_Forssmann_session_3 + ave_cor_spks_Forssmann_session_4)/4
+correct_list_Forssmann = c(ave_cor_spks_Forssmann_session_1, ave_cor_spks_Forssmann_session_2, ave_cor_spks_Forssmann_session_3, ave_cor_spks_Forssmann_session_4, ave_cor_spks_Forssmann_session_total)
+
+ave_incor_spks_Forssmann_session_1 = spks(4, "average_incorrect_spks")
+ave_incor_spks_Forssmann_session_2 = spks(5, "average_incorrect_spks")
+ave_incor_spks_Forssmann_session_3 = spks(6, "average_incorrect_spks")
+ave_incor_spks_Forssmann_session_4 = spks(7, "average_incorrect_spks")
+ave_incor_spks_Forssmann_session_total = (ave_incor_spks_Forssmann_session_1 + ave_incor_spks_Forssmann_session_2 + ave_incor_spks_Forssmann_session_3 + ave_incor_spks_Forssmann_session_4)/4
+incorrect_list_Forssmann = c(ave_incor_spks_Forssmann_session_1, ave_incor_spks_Forssmann_session_2, ave_incor_spks_Forssmann_session_3, ave_incor_spks_Forssmann_session_4, ave_incor_spks_Forssmann_session_total)
+
+```
+
+integrating information regarding Hench, including spks, delta_RL, feedback_type, accross all sessions it has. And calculating its average spks for each session, grouped by average correct and incorrect feedback_type, in order to better explore if there is a correlation between number of spks and feedback_type, and between delta_RL and feedback_type.
+```{r}
+# Hench Info
+delta_RL8 = session[[8]]$contrast_right - session[[8]]$contrast_left
+delta_RL9 = session[[9]]$contrast_right - session[[9]]$contrast_left
+delta_RL10 = session[[10]]$contrast_right - session[[10]]$contrast_left
+delta_RL11 = session[[11]]$contrast_right - session[[11]]$contrast_left
+delta_RL_Hench_total = c(delta_RL8, delta_RL9, delta_RL10, delta_RL11)
+
+feedback_type_of_Hench_session1 = session[[8]]$feedback_type
+feedback_type_of_Hench_session2 = session[[9]]$feedback_type
+feedback_type_of_Hench_session3 = session[[10]]$feedback_type
+feedback_type_of_Hench_session4 = session[[11]]$feedback_type
+feedback_type_of_Hench_total = c(feedback_type_of_Hench_session1, feedback_type_of_Hench_session2, feedback_type_of_Hench_session3, feedback_type_of_Hench_session4)
+
+ave_cor_spks_Hench_session_1 = spks(8, "average_correct_spks")
+ave_cor_spks_Hench_session_2 = spks(9, "average_correct_spks")
+ave_cor_spks_Hench_session_3 = spks(10, "average_correct_spks")
+ave_cor_spks_Hench_session_4 = spks(11, "average_correct_spks")
+ave_cor_spks_Hench_session_total = (ave_cor_spks_Hench_session_1 + ave_cor_spks_Hench_session_2 + ave_cor_spks_Hench_session_3 + ave_cor_spks_Hench_session_4)/4
+correct_list_Hench = c(ave_cor_spks_Hench_session_1, ave_cor_spks_Hench_session_2, ave_cor_spks_Hench_session_3, ave_cor_spks_Hench_session_4, ave_cor_spks_Hench_session_total)
+
+ave_incor_spks_Hench_session_1 = spks(8, "average_incorrect_spks")
+ave_incor_spks_Hench_session_2 = spks(9, "average_incorrect_spks")
+ave_incor_spks_Hench_session_3 = spks(10, "average_incorrect_spks")
+ave_incor_spks_Hench_session_4 = spks(11, "average_incorrect_spks")
+ave_incor_spks_Hench_session_total = (ave_incor_spks_Hench_session_1 + ave_incor_spks_Hench_session_2 + ave_incor_spks_Hench_session_3 + ave_incor_spks_Hench_session_4)/4
+incorrect_list_Hench = c(ave_incor_spks_Hench_session_1, ave_incor_spks_Hench_session_2, ave_incor_spks_Hench_session_3, ave_incor_spks_Hench_session_4, ave_incor_spks_Hench_session_total)
+
+```
+
+integrating information regarding Lederberg, including spks, delta_RL, feedback_type, accross all sessions it has. And calculating its average spks for each session, grouped by average correct and incorrect feedback_type, in order to better explore if there is a correlation between number of spks and feedback_type, and between delta_RL and feedback_type.
+```{r}
+# Lederberg Info
+delta_RL12 = session[[12]]$contrast_right - session[[12]]$contrast_left
+delta_RL13 = session[[13]]$contrast_right - session[[13]]$contrast_left
+delta_RL14 = session[[14]]$contrast_right - session[[14]]$contrast_left
+delta_RL15 = session[[15]]$contrast_right - session[[15]]$contrast_left
+delta_RL16 = session[[16]]$contrast_right - session[[16]]$contrast_left
+delta_RL17 = session[[17]]$contrast_right - session[[17]]$contrast_left
+delta_RL18 = session[[18]]$contrast_right - session[[18]]$contrast_left
+delta_RL_Lederberg_total = c(delta_RL12, delta_RL13, delta_RL14, delta_RL15, delta_RL16, delta_RL17, delta_RL18)
+
+feedback_type_of_Lederberg_session1 = session[[12]]$feedback_type
+feedback_type_of_Lederberg_session2 = session[[13]]$feedback_type
+feedback_type_of_Lederberg_session3 = session[[14]]$feedback_type
+feedback_type_of_Lederberg_session4 = session[[15]]$feedback_type
+feedback_type_of_Lederberg_session5 = session[[16]]$feedback_type
+feedback_type_of_Lederberg_session6 = session[[17]]$feedback_type
+feedback_type_of_Lederberg_session7 = session[[18]]$feedback_type
+feedback_type_of_Lederberg_total = c(feedback_type_of_Lederberg_session1, feedback_type_of_Lederberg_session2, feedback_type_of_Lederberg_session3, feedback_type_of_Lederberg_session4, feedback_type_of_Lederberg_session5, feedback_type_of_Lederberg_session6, feedback_type_of_Lederberg_session7)
+
+ave_cor_spks_Lederberg_session_1 = spks(12, "average_correct_spks")
+ave_cor_spks_Lederberg_session_2 = spks(13, "average_correct_spks")
+ave_cor_spks_Lederberg_session_3 = spks(14, "average_correct_spks")
+ave_cor_spks_Lederberg_session_4 = spks(15, "average_correct_spks")
+ave_cor_spks_Lederberg_session_5 = spks(16, "average_correct_spks")
+ave_cor_spks_Lederberg_session_6 = spks(17, "average_correct_spks")
+ave_cor_spks_Lederberg_session_7 = spks(18, "average_correct_spks")
+ave_cor_spks_Lederberg_session_total = (ave_cor_spks_Lederberg_session_1 + ave_cor_spks_Lederberg_session_2 + ave_cor_spks_Lederberg_session_3 + ave_cor_spks_Lederberg_session_4 + ave_cor_spks_Lederberg_session_5 + ave_cor_spks_Lederberg_session_6 + ave_cor_spks_Lederberg_session_7)/7
+
+cor_spks_Lederberg_session_total = c(spks(12, "average_correct_spks"), spks(13, "average_correct_spks"), spks(14, "average_correct_spks"), spks(15, "average_correct_spks"), spks(16, "average_correct_spks"), spks(17, "average_correct_spks"), spks(18, "average_correct_spks"))
+
+correct_list_Lederberg = c(ave_cor_spks_Lederberg_session_1, ave_cor_spks_Lederberg_session_2, ave_cor_spks_Lederberg_session_3, ave_cor_spks_Lederberg_session_4, ave_cor_spks_Lederberg_session_5, ave_cor_spks_Lederberg_session_6, ave_cor_spks_Lederberg_session_7, ave_cor_spks_Lederberg_session_total)
+
+ave_incor_spks_Lederberg_session_1 = spks(12, "average_incorrect_spks")
+ave_incor_spks_Lederberg_session_2 = spks(13, "average_incorrect_spks")
+ave_incor_spks_Lederberg_session_3 = spks(14, "average_incorrect_spks")
+ave_incor_spks_Lederberg_session_4 = spks(15, "average_incorrect_spks")
+ave_incor_spks_Lederberg_session_5 = spks(16, "average_incorrect_spks")
+ave_incor_spks_Lederberg_session_6 = spks(17, "average_incorrect_spks")
+ave_incor_spks_Lederberg_session_7 = spks(18, "average_incorrect_spks")
+ave_incor_spks_Lederberg_session_total = (ave_incor_spks_Lederberg_session_1 + ave_incor_spks_Lederberg_session_2 + ave_incor_spks_Lederberg_session_3 + ave_incor_spks_Lederberg_session_4 + ave_incor_spks_Lederberg_session_5 + ave_incor_spks_Lederberg_session_6 + ave_incor_spks_Lederberg_session_7)/7
+
+incorrect_list_Lederberg = c(ave_incor_spks_Lederberg_session_1, ave_incor_spks_Lederberg_session_2, ave_incor_spks_Lederberg_session_3, ave_incor_spks_Lederberg_session_4, ave_incor_spks_Lederberg_session_5, ave_incor_spks_Lederberg_session_6, ave_incor_spks_Lederberg_session_7, ave_incor_spks_Lederberg_session_total)
+
+incor_spks_Lederberg_trial_total = c(spks(12, "average_incorrect_spks"), spks(13, "average_incorrect_spks"), spks(14, "average_incorrect_spks"), spks(15, "average_incorrect_spks"), spks(16, "average_incorrect_spks"), spks(17, "average_incorrect_spks"), spks(18, "average_incorrect_spks"))
+
+
+
+```
+
+
+integrating information regarding all sessions, including spks, delta_RL, feedback_type, accross all sessions it has. And calculating its average spks for each session, grouped by average correct and incorrect feedback_type, in order to better explore if there is a correlation between number of spks and feedback_type, and between delta_RL and feedback_type.
+```{r}
+# Overall Info
+# Combine all these difference between contract levels for Cori as one set
+delta_RL_total = list(delta_RL1, delta_RL2, delta_RL3, delta_RL4, delta_RL5, delta_RL6, delta_RL7, delta_RL8, delta_RL9, delta_RL10, delta_RL11, delta_RL12, delta_RL13, delta_RL14, delta_RL15, delta_RL16, delta_RL17, delta_RL18)
+
+delta_RL_total_c = c(delta_RL1, delta_RL2, delta_RL3, delta_RL4, delta_RL5, delta_RL6, delta_RL7, delta_RL8, delta_RL9, delta_RL10, delta_RL11, delta_RL12, delta_RL13, delta_RL14, delta_RL15, delta_RL16, delta_RL17, delta_RL18)
+# Extract the feedback type into one set
+
+
+# Combine all these feedback types into one set
+feedback_type_total = c(session[[1]]$feedback_type, session[[2]]$feedback_type, session[[3]]$feedback_type, session[[4]]$feedback_type, session[[5]]$feedback_type, session[[6]]$feedback_type, session[[7]]$feedback_type, session[[8]]$feedback_type, session[[9]]$feedback_type, session[[10]]$feedback_type, session[[11]]$feedback_type, session[[12]]$feedback_type, session[[13]]$feedback_type, session[[14]]$feedback_type, session[[15]]$feedback_type, session[[16]]$feedback_type, session[[17]]$feedback_type, session[[18]]$feedback_type)
+# 18, 
+total_cor_list_ave = c(ave_cor_spks_Cori_session_total, ave_cor_spks_Forssmann_session_total, ave_cor_spks_Hench_session_total, ave_cor_spks_Lederberg_session_total)
+total_incor_list_ave = c(ave_incor_spks_Cori_session_total, ave_incor_spks_Forssmann_session_total, ave_incor_spks_Hench_session_total, ave_incor_spks_Lederberg_session_total)
+
+
+```
+
+
+Below is a plotting of the two lines indicating the means of average spks of correct feedback for each mouse accross its all sessions and that of a incorrect feedback. The purpose for the plot is for a better visualization. From these plots, it seems more clear that the average number of spks for a correct feedback type was greater than that of an incorrect feedback type, as the blue line, representing the correct feedback rate, was always higher than that of incorrect feedback rate, represented by red lines.
+```{r}
+
+spks_plot <- function(feedback_types, correct_list, incorrect_list, number_of_trials, max, min){
+plot(correct_list, type = "b", col = "blue", pch = 16,
+     xlab = "Session", ylab = "Average Spikes", main = paste("Average Correct vs Incorrect Spikes of", deparse(substitute(feedback_types))), ylim = c(min, max), xlim = c(1, number_of_trials))
+lines(incorrect_list, col = "red", type = "b", pch = 16)
+legend("topright", legend = c("correct_feedback", "incorrect_feedback"), col = c("blue", "red"), lty = c(1, 1), bty = "n", ncol = 2, cex = 0.8, xjust = 0.5)
+}
+
+```
+
+
+```{r}
+spks_plot(Cori, correct_list_cori, incorrect_list_cori, 4, max(correct_list_cori), min(incorrect_list_cori))
+
+spks_plot(Forssmann, correct_list_Forssmann, incorrect_list_Forssmann, 5, max(correct_list_Forssmann), min(incorrect_list_Forssmann))
+
+spks_plot(Hench, correct_list_Hench, incorrect_list_Hench, 5, max(correct_list_Hench), min(incorrect_list_Hench))
+
+spks_plot(Lederberg, correct_list_Lederberg, incorrect_list_Lederberg, 8, max(correct_list_Lederberg), min(incorrect_list_Lederberg))
+
+# 1.0 stands for average data from Cori, 2.0 stands for the average data from Forssmann, 3.0 stands for the average data from Hench, 4.0 stands for the average data from Lederberg
+spks_plot(Overall_data, total_cor_list_ave, total_incor_list_ave, 4, max(total_cor_list_ave), min(total_incor_list_ave))
+```
+
+
+Below is a function for plotting the deltas between contrast rate vs feedback_types, with taking the absolute values of delta, and with the summarize of the linear model between delta of contrast level and correct feedback type. The linear relationship between delta in contrast level and number of correct feedback type was not detected, but when integrating all individual sessions, a positive relationship between delta of contrast and number of correct feedback typewas detected. This means that there are, at least, some signs of positive relationships betweeen correct feedback type and delta of contrast level, therefore, I would include this data in my prediction model.
+
+```{r}
+
+abs_data_plot <- function(feedback_types, deltas_RL){
+
+feedback_delta_0 = c()
+feedback_delta_0.25 = c()
+feedback_delta_0.5 = c()
+feedback_delta_0.75 = c()
+feedback_delta_1 = c()
+
+deltaRL_0 = c()
+deltaRL_0.25 = c()
+deltaRL_0.5 = c()
+deltaRL_0.75 = c()
+deltaRL_1 = c()
+
+for (i in seq_along(deltas_RL)){
+  # when right - left = 0
+  if (abs(deltas_RL[i]) == 0){
+    deltaRL_0 = c(deltaRL_0, deltas_RL[i])
+    feedback_delta_0 = c(feedback_delta_0, feedback_types[i])     
+  }
+  
+  # when right - left = 0.25
+  else if (abs(deltas_RL[i]) == 0.25){
+    deltaRL_0.25 = c(deltaRL_0.25, deltas_RL[i])
+    feedback_delta_0.25 = c(feedback_delta_0.25, feedback_types[i])       
+  }
+  
+  # when right - left = 0.5
+  else if(abs(deltas_RL[i]) == 0.5){
+    deltaRL_0.5 = c(deltaRL_0.5, deltas_RL[i])
+    feedback_delta_0.5 = c(feedback_delta_0.5, feedback_types[i])      
+  }
+  
+  # when right - left = 0.75
+  else if (abs(deltas_RL[i]) == 0.75){
+    deltaRL_0.75 = c(deltaRL_0.75, deltas_RL[i])
+    feedback_delta_0.75 = c(feedback_delta_0.75, feedback_types[i])       
+  }
+  
+  # when right - left = 1
+  else if (abs(deltas_RL[i]) == 1){
+    deltaRL_1 = c(deltaRL_1, deltas_RL[i])
+    feedback_delta_1 = c(feedback_delta_1, feedback_types[i])       
+  }
+
+}
+
+
+ave_cor_0 = sum(feedback_delta_0 == 1) / length(feedback_delta_0)
+ave_cor_0.25 = sum(feedback_delta_0.25 == 1) / length(feedback_delta_0.25)
+ave_cor_0.5 = sum(feedback_delta_0.5 == 1) / length(feedback_delta_0.5)
+ave_cor_0.75 = sum(feedback_delta_0.75 == 1) / length(feedback_delta_0.75)
+ave_cor_1 = sum(feedback_delta_1 == 1) / length(feedback_delta_1)
+
+#####
+
+x_values = c(0, 0.25, 0.5, 0.75, 1)
+y_values = c(ave_cor_0, ave_cor_0.25, ave_cor_0.5, ave_cor_0.75, ave_cor_1)
+
+df <- data.frame(
+  y = y_values,
+  x = x_values
+)
+
+lm = lm(y ~ x, data = df)
+print(summary(lm))
+plot(y_values, type = "b", col = "blue", pch = 16, xlab = "Absolute contrast value", ylab = "Average Correct feedback rate", main = paste("line Plot of", deparse(substitute(feedback_types)), "with absolute contrast value"), xaxt = "n")
+axis(side = 1, at = 1:length(x_values), labels = x_values)
+
+
+}
+```
+
+
+
+```{r}
+# Plot for cori
+abs_data_plot(feedback_type_of_cori_session1, delta_RL1)
+abs_data_plot(feedback_type_of_cori_session2, delta_RL2)
+abs_data_plot(feedback_type_of_cori_session3, delta_RL3)
+abs_data_plot(feedback_type_of_cori_total, delta_RL_cori_total)
+```
+
+
+```{r}
+# Plot for Forssmann
+abs_data_plot(feedback_type_of_Forssmann_session1, delta_RL4)
+abs_data_plot(feedback_type_of_Forssmann_session2, delta_RL5)
+abs_data_plot(feedback_type_of_Forssmann_session3, delta_RL6)
+abs_data_plot(feedback_type_of_Forssmann_session4, delta_RL7)
+abs_data_plot(feedback_type_of_Forssmann_total, delta_RL_Forssmann_total)
+```
+
+
+```{r}
+# Plot for Hench
+abs_data_plot(feedback_type_of_Hench_session1, delta_RL8)
+abs_data_plot(feedback_type_of_Hench_session2, delta_RL9)
+abs_data_plot(feedback_type_of_Hench_session3, delta_RL10)
+abs_data_plot(feedback_type_of_Hench_session4, delta_RL11)
+abs_data_plot(feedback_type_of_Hench_total, delta_RL_Hench_total)
+```
+
+
+```{r}
+# Plot for Lederberg
+abs_data_plot(feedback_type_of_Lederberg_session1, delta_RL12)
+abs_data_plot(feedback_type_of_Lederberg_session2, delta_RL13)
+abs_data_plot(feedback_type_of_Lederberg_session3, delta_RL14)
+abs_data_plot(feedback_type_of_Lederberg_session4, delta_RL15)
+abs_data_plot(feedback_type_of_Lederberg_session5, delta_RL16)
+abs_data_plot(feedback_type_of_Lederberg_session6, delta_RL17)
+abs_data_plot(feedback_type_of_Lederberg_session7, delta_RL18)
+abs_data_plot(feedback_type_of_Lederberg_total, delta_RL_Lederberg_total)
+```
+
+```{r}
+
+# Plot for overall data
+abs_data_plot(feedback_type_total, delta_RL_total_c)
+
+```
+
+# Section 4, section 5, Predictive modeling and Predictions, with discussion. 
+In this session, I would create prediction models based on one portion of data(call this training_data, derived from data in sessions 1 to 18, and using the model formed to predict the complement portion of data, (call this training_data, derived from data in session 19,20, originally from testing data "test1" and "test2"). After that, I would do some analysis on the result.
+
+I would briefly summarize my result and analyzing procedure here:
+
+Before modeling, I replace all -1s with 0s, so that models can be applied without generating errors. Remind that 0 means fail, 1 means success
+
+Initially, I want to include measurements regarding misclassification rate, however, after I saw the confusion matrix, I found that most models predict little amount of zeros and predict ones most of times, I see this as a sign that the model was unable to distinguish zeros correctly, and thus the misclassification ratio was not a sufficient way to assess model performance, as it could generates a low result merely because there are more ones than zeros in testing data in this case. 
+
+So, in order to evaluate the result in a deeper sense, I calculated the ratio between correct number of zeros predicted and the true number of zeros in testing data, also the ratios between correct number of ones predicted between true number of ones in testing data, the reason I did so was that, such a measurement would measure the model performance in a way that only performing well in predicting a single outcome is not sufficient to be assessed as a good model, as it includes the performance in predicting both zeros and ones. This does provided me an insight into The more detailed reason for that will be given on the following model analysis, however, in later analysis, I found that it was hard to use such measurements to choose models, as it produces two values for each models, and one model could have one value higher than another model, but have the other value lower. For this reason, finding a criteria, that was unique(a single value under a rigit certeria), and was able to be applied to assess all model performances became important. After consideration, I decided to use the value of the average of ratio between correct number of ones(and zeros) predicted between true number of ones(and zeros) in testing data((correct_zeros_rate + correct_ones_rate)/2)), and take the model that generates higher of such value as the better model. The reason is that, it takes into account both ratios mentioned and generate a single value which can be compared across groups directly, it also measures the model performance in a way that it was necessary to perform well in predicting both zeros and ones, as if only ones are predicted correctly, then such a ratio would be only 0.5 or slightly more, and would be outcompeted by models that predicts the number of ones less well, but predicts a significantly higher amount of zeros correctly.
+
+In this section, three models will be applied: 1. Logistic model; 2. Linear Discrimination model; 3.K Nearest Neighbors(with k = 5). There will three model groups, each contains these three models, but uses different filtering criteria for delta_RL. First Model Group would have unfiltered delta_RL, second model group would have the data containinf delta_RL with left contrast and right contrast were equal being removed(but not when both of them are equal to zero), third model group would have data containing delta_RL with both of left and right contrast are equal to zero being removed, based on the data of model group2, which means all cases in which left and right contrast are equal would be filtered in model group 3. The reason why I filter the delta_RL data in this way would be discussed later in this session as I go down to the analysis of each prediction model. So there will be total of nine models under investigarion, three for each model group.
+
+Note that I chose K=5 for knn clustering, as after going through multiple attempts, I found that it was the ideal k number which lowers down the misclassification rate, while maintaining the ability to make predictions of zeros, rather than generating mostly ones. However, it was a intuitive method, a more comprehensive investigation should be applied for future analysis.
+
+
+```{r}
+
+replace_minus_one_with_zero <- function(x) {
+  ifelse(x == -1, 0, x)
+}
+
+```
+
+
+1. Model group 1: taking into account all delta=0
+
+  I tried three prediction models, logistic model, linear discrimination model, and k nearest neighbors model. 
+  
+   I used the last session for each mouse as testing data, and the rest as training data, and found that the misclassification rate for each model, which are: lda: 0.275, Logistic model: 0.345, knn: 0.38. Which means lda is the model with best performance if we use the misclassification rate as the criteria. However, when I was checking the confusion matrix, there are no 0s in lda being predicted, in which I cannot reject that the reason why it was accurate might be only because it has a low ability in discriminating of 1s from 0s(and thus they choose 1s extremely frequently), and that possibility that they get a low misclassification rate merely because there are more 1s in dataset than 0s in the dataset.
+   
+   To find an additional way to evaluate the ability of models, I computed the ratios of correct predictions for both zeros and ones relative to their true occurrences in testing data. The reason for that is, it includes the performance in predicting both zeros and ones, and thus can reveal a deeper truth behind the misclassification rate, which means, does the low misclassification rate shown was due to its true ability to distinguish between zeros and ones from testing data? Or it's merely because it cannot distinguish zeros from ones and get a low misclassification rate not because its distinguishing ability, but only because there are more ones than zeros in the testing data and they simply predict most ones and zeros from testing data as one. 
+   
+   I also computed the average ratio of correct_zeros_rate and correct_ones_rate as mentioned at the start of this section, and I will use it to be the criteria for choosing final model.
+   
+   I will do the same measurements for all model groups. For this time, I found that such as ratio were: 
+   
+   Logistic model(misclassification rate: 0.345):
+   
+   [1] "ratio between correct number of zeros predicted and ture zeros in testing data: 0.454545454545455"
+   
+   [1] "ratio between correct number of ones predicted and ture ones in testing data: 0.731034482758621"
+   
+   [1] "average ratio of correct_zeros_rate and correct_ones_rate: 0.592789968652038"
+   
+   lda(misclassification rate: 0.275):
+   
+   [1] "ratio between correct number of zeros predicted and ture zeros in testing data: 0"
+   
+   [1] "ratio between correct number of ones predicted and ture ones in testing data: 1"
+   
+   [1] "average ratio of correct_zeros_rate and correct_ones_rate: 0.5"
+   
+   knn(misclassification rate: 0.31):
+   
+   [1] "ratio between correct number of zeros predicted and ture zeros in testing data: 0.181818181818182"
+   
+   [1] "ratio between correct number of ones predicted and ture ones in testing data: 0.882758620689655"
+   
+   [1] "average ratio of correct_zeros_rate and correct_ones_rate: 0.532288401253919"
+   
+   
+   From the result, I found a problem that the misclassification rate for lda and knn might simply be lowest due to the model simply predict no zeros. This makes the prediction meaningless because if predicting all outcomes as ones gives the best result, it will be unnecessary to create a model. However, the logistic model which has a balanced prediction correct rate between 0s and 1s seem to have a pretty high misclassification rate, or, the misclassification rate could have be reduced.
+      So, how to find a model with low misclassification rate while having high correct rate for both 0s and 1s?
+      In order to explore that, I started two other round of modeling and analysis(Model Group 2 and Model Group 3), in which for Model Group 2, I will remove the case in which data containing left and right contrast delta are the same(but not when they are all equal to zero). Because on such a case, the action done by a mouse would receive penalty randomly with a chance of 50% whichever side they turn the wheel, which means such a randomness does not relate to how well a mouse could distinguish differences in contrast levels and make responses accordingly, and thus it could be noises in the data and decrease the model performance.  
+      For Model Group 3, in addition of removing deltas in which the left and right are the same, I will also remove deltas in which left and right contrast are both zero(which means I will remove all cases in which the left and right contrast are equal). As in such a case where both contrast level of left and right are zero, they do not receive any signals implying them to act, and they are regarded made a correct feedback as long as they do not turn the wheel, which means this might not relate to how well a mouse could distinguish differences in contrast levels and make responses to these and might be noises in the model.
+   
+```{r}
+################ training_data
+
+
+correct_list_training <- c() %>% as_tibble
+incorrect_list_training <- c() %>% as_tibble
+  
+for (i in c(1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18)){
+  correct <- spks(i, "correct_spks_and_feedback_table")
+  correct_list_training <- bind_rows(correct_list_training, correct)
+  
+  incorrect <- spks(i, "incorrect_spks_and_feedback_table")
+  incorrect_list_training <- bind_rows(incorrect_list_training, incorrect) 
+}
+
+training_data <- bind_rows(correct_list_training, incorrect_list_training)
+training_data <- training_data %>%
+  mutate_all(replace_minus_one_with_zero)
+
+##
+correct_list_predicting <- c() %>% as_tibble
+incorrect_list_predicting <- c() %>% as_tibble
+
+for (i in c(19, 20)){
+  correct <- spks(i, "correct_spks_and_feedback_table")
+  correct_list_predicting <- bind_rows(correct_list_predicting, correct)
+  
+  incorrect <- spks(i, "incorrect_spks_and_feedback_table")
+  incorrect_list_predicting <- bind_rows(incorrect_list_predicting, incorrect) 
+}
+
+predicting_data <- bind_rows(correct_list_predicting, incorrect_list_predicting)
+predicting_data <- predicting_data %>%
+  mutate_all(replace_minus_one_with_zero)
+
+x_train <- tibble(spks = training_data$spks, delta_contrast = training_data$delta_contrast)
+y_train <- training_data$type
+
+x_test <- tibble(spks = predicting_data$spks, delta_contrast = predicting_data$delta_contrast)
+y_test <- predicting_data$type
+
+```
+
+
+```{r}
+# Logistic model
+sum_1 = sum(training_data$type == 1)
+sum_0 = sum(training_data$type == 0)
+
+prior_prob_1 = sum_1 / (sum_1 + sum_0)
+prior_prob_0 = sum_0 / (sum_1 + sum_0)
+prior_prob_0
+prior_prob_1
+true_0 <- sum(predicting_data$type == 0)
+true_1 <- sum(predicting_data$type == 1)
+
+
+logistic_model1 <- glm(type ~ spks + delta_contrast, family = binomial, data = training_data)
+summary(logistic_model1)
+
+logistic_predictions1 <- predict(logistic_model1, newdata = x_test)
+
+predicted_labels1 <- ifelse(logistic_predictions1 > prior_prob_1, "1", "0")
+
+length(predicted_labels1)
+length(y_test)
+confusion_matrix <- table(predicted_labels1, y_test)
+print("Confusion Matrix for logistics model:")
+confusion_matrix
+
+misclassification_rate <- 1 - sum(diag(confusion_matrix)) / sum(confusion_matrix)
+print(paste("Misclassification Error Rate for logistics model:", misclassification_rate))
+correct_zeros_rate <- confusion_matrix[1,1] / true_0
+print(paste("ratio between correct number of zeros predicted between and zeros in testing data:", correct_zeros_rate))
+correct_ones_rate <- confusion_matrix[2,2] / true_1
+print(paste("ratio between correct number of ones predicted between and ones in testing data:", correct_ones_rate))
+print(paste("average ratio of correct_zeros_rate and correct_ones_rate:", (correct_zeros_rate + correct_ones_rate)/2))
+
+
+# lda model
+library(MASS)
+
+lda_model <- lda(type ~ spks + delta_contrast, data = training_data, prior = c(prior_prob_0, prior_prob_1))
+
+lda_predictions <- predict(lda_model, newdata = x_test)
+class_means <- as.data.frame(lda_model$means)
+
+
+confusion_matrix <- table(lda_predictions$class, y_test)
+
+print("Confusion Matrix for lda:")
+print(confusion_matrix)
+misclassification_rate <- 1 - sum(diag(confusion_matrix)) / sum(confusion_matrix)
+print(paste("Misclassification Error Rate for lda:", misclassification_rate))
+correct_zeros_rate <- confusion_matrix[1,1] / true_0
+print(paste("ratio between correct number of zeros predicted and ture zeros in testing data:", correct_zeros_rate))
+correct_ones_rate <- confusion_matrix[2,2] / true_1
+print(paste("ratio between correct number of ones predicted and ture ones in testing data:", correct_ones_rate))
+print(paste("average ratio of correct_zeros_rate and correct_ones_rate:", (correct_zeros_rate + correct_ones_rate)/2))
+
+library(class)
+
+# Train kNN models with  k=5
+
+knn_model_15 <- knn(train = as.matrix(x_train), test = as.matrix(x_test), cl = y_train, k = 5)
+# Confusion matrix and misclassification error for k=15
+conf_matrix_1 <- table(Predicted = knn_model_15, Actual = y_test)
+misclassification_rate_1 <- 1 - sum(diag(conf_matrix_1)) / sum(conf_matrix_1)
+print("Confusion Matrix for knn with k=15:")
+print(conf_matrix_1)
+print(paste("Misclassification Error Rate for knn with k = 5:", misclassification_rate_1))
+correct_zeros_rate <- conf_matrix_1[1,1] / true_0
+print(paste("ratio between correct number of zeros predicted and ture zeros in testing data:", correct_zeros_rate))
+correct_ones_rate <- conf_matrix_1[2,2] / true_1
+print(paste("ratio between correct number of ones predicted and ture ones in testing data:", correct_ones_rate))
+print(paste("average ratio of correct_zeros_rate and correct_ones_rate:", (correct_zeros_rate + correct_ones_rate)/2))
+
+
+```
+
+
+2. Model Group 2: on the basis of dataset from model group 1, remove the case in which left and right delta in contrast are the same
+
+   So, how to find a model with low misclassification rate while having high correct rate for both 0s and 1s?
+ 
+  Same as in model group1, I tried three prediction models, logistic model, linear discrimination model, and k nearest neighbors model, then fitted the prior probability for 0s and 1s from training data. 
+   
+   The information of this dataset was: 
+      
+   Logistic model(misclassification rate: 0.231884057971014):
+   
+   [1] "ratio between correct number of zeros predicted and ture zeros in testing data: 0"
+   
+   [1] "ratio between correct number of ones predicted and ture ones in testing data: 1"
+   
+   [1] "average ratio of correct_zeros_rate and correct_ones_rate: 0.5"
+   
+   lda(misclassification rate: 0.231884057971015):
+   
+   [1] "ratio between correct number of zeros predicted and ture zeros in testing data: 0"
+   
+   [1] "ratio between correct number of ones predicted and ture ones in testing data: 1"
+   
+   [1] "average ratio of correct_zeros_rate and correct_ones_rate: 0.5"
+   
+   knn(misclassification rate: 0.304347826086957):
+   
+   [1] "ratio between correct number of zeros predicted and ture zeros in testing data: 0.0625"
+   
+   [1] "ratio between correct number of ones predicted and ture ones in testing data: 0.886792452830189"
+
+   [1] "average ratio of correct_zeros_rate and correct_ones_rate: 0.474646226415094"
+
+   
+
+```{r}
+# test if the number of spks when a correct feedback type is carried out is different from the number of spks when a incorrect feedback is carried out
+
+spks2 <- function(session_number, n = 1){
+
+spks = spks_column_func(session_number)
+
+feedback_type = session[[session_number]]$feedback_type
+delta_contrast = abs(session[[session_number]]$contrast_right - session[[session_number]]$contrast_left)
+
+tibble1 <- tibble(feedback_type, delta_contrast, session[[session_number]]$contrast_right, session[[session_number]]$contrast_left)
+tibble2 <- tibble1 %>% filter(session[[session_number]]$contrast_right != session[[session_number]]$contrast_left)
+feedback_type <- tibble2$feedback_type
+delta_contrast <- tibble2$delta_contrast
+
+list_1 = c()
+list_1_spks = c()
+delta_list_1 = c()
+list_neg1 = c()
+list_neg1_spks = c()
+delta_list_neg1 = c()
+
+
+for (i in seq_along(feedback_type)){
+
+  if (feedback_type[i] == 1){
+      list_1 = c(list_1, feedback_type[i])
+      list_1_spks = c(list_1_spks, spks[i])
+      delta_list_1 = c(delta_list_1, delta_contrast[i])}
+  
+  else if(feedback_type[i] == -1){
+      list_neg1 = c(list_neg1, feedback_type[i])
+      list_neg1_spks = c(list_neg1_spks, spks[i])
+      delta_list_neg1 = c(delta_list_neg1, delta_contrast[i])}
+  }
+
+
+if (n == "t_test_result"){
+print(t_test_result)
+}
+
+if (n == "average_correct_spks"){
+  return(average_correct_spks)
+}
+
+
+if (n == "average_incorrect_spks"){
+  return(average_incorrect_spks)
+}
+
+
+if (n == "correct_spks_and_feedback_table"){
+  x<- tibble(spks = list_1_spks, delta_contrast = delta_list_1, type = list_1)
+  return(x)}
+
+if (n == "incorrect_spks_and_feedback_table"){
+    x<- tibble(spks = list_neg1_spks, delta_contrast = delta_list_neg1, type = list_neg1)
+  return(x)}}
+
+```
+
+
+```{r}
+
+correct_list_training <- c() %>% as_tibble
+incorrect_list_training <- c() %>% as_tibble
+  
+for (i in c(1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18)){
+  correct <- spks2(i, "correct_spks_and_feedback_table")
+  correct_list_training <- bind_rows(correct_list_training, correct)
+  
+  incorrect <- spks2(i, "incorrect_spks_and_feedback_table")
+  incorrect_list_training <- bind_rows(incorrect_list_training, incorrect) 
+}
+
+training_data <- bind_rows(correct_list_training, incorrect_list_training)
+training_data <- training_data %>%
+  mutate_all(replace_minus_one_with_zero)
+
+##
+correct_list_predicting <- c() %>% as_tibble
+incorrect_list_predicting <- c() %>% as_tibble
+
+for (i in c(19, 20)){
+  correct <- spks2(i, "correct_spks_and_feedback_table")
+  correct_list_predicting <- bind_rows(correct_list_predicting, correct)
+  
+  incorrect <- spks2(i, "incorrect_spks_and_feedback_table")
+  incorrect_list_predicting <- bind_rows(incorrect_list_predicting, incorrect) 
+}
+
+predicting_data <- bind_rows(correct_list_predicting, incorrect_list_predicting)
+predicting_data <- predicting_data %>%
+  mutate_all(replace_minus_one_with_zero)
+
+x_train <- tibble(spks = training_data$spks, delta_contrast = training_data$delta_contrast)
+y_train <- training_data$type
+
+x_test <- tibble(spks = predicting_data$spks, delta_contrast = predicting_data$delta_contrast)
+y_test <- predicting_data$type
+
+sum_1 = sum(training_data$type == 1)
+sum_0 = sum(training_data$type == 0)
+
+prior_prob_1 = sum_1 / (sum_1 + sum_0)
+prior_prob_0 = sum_0 / (sum_1 + sum_0)
+true_0 <- sum(predicting_data$type == 0)
+true_1 <- sum(predicting_data$type == 1)
+
+# Logistic model
+logistic_model2 <- glm(type ~ delta_contrast, family = binomial, data = training_data)
+summary(logistic_model2)
+
+logistic_predictions2 <- predict(logistic_model2, newdata = x_test)
+
+predicted_labels2 <- ifelse(logistic_predictions2 > prior_prob_1, "1", "0")
+
+confusion_matrix2 <- table(predicted_labels2, y_test)
+
+print("Confusion Matrix for Logistic model:")
+print(confusion_matrix2)
+
+misclassification_rate2 <- sum(diag(confusion_matrix2)) / sum(confusion_matrix2)
+print(paste("Misclassification Error Rate for logistic model:", misclassification_rate2))
+correct_zeros_rate <- 0 / true_0 # The reason why write the nominator as 0, is that due to no zeros are predicted as 0s, the matrix generated does not contain the row which stores the informationabout zeros being predicted, and was hard to reference, so I directly add 0 here
+
+print(paste("ratio between correct number of zeros predicted and ture zeros in testing data:", correct_zeros_rate))
+correct_ones_rate <- confusion_matrix2[1,2] / true_1
+print(paste("ratio between correct number of ones predicted and ture ones in testing data:", correct_ones_rate))
+print(paste("average ratio of correct_zeros_rate and correct_ones_rate:", (correct_zeros_rate + correct_ones_rate)/2))
+
+# lda model
+library(MASS)
+
+lda_model <- lda(type ~ spks + delta_contrast, data = training_data, prior = c(prior_prob_0, prior_prob_1))
+
+lda_predictions <- predict(lda_model, newdata = x_test)
+class_means <- as.data.frame(lda_model$means)
+
+
+confusion_matrix <- table(lda_predictions$class, y_test)
+
+print("Confusion Matrix for lda model:")
+print(confusion_matrix)
+
+misclassification_rate <- 1 - sum(diag(confusion_matrix)) / sum(confusion_matrix)
+print(paste("Misclassification Error Rate for lda model:", misclassification_rate))
+correct_zeros_rate <- confusion_matrix[1,1] / true_0
+print(paste("ratio between correct number of zeros predicted and ture zeros in testing data:", correct_zeros_rate))
+correct_ones_rate <- confusion_matrix[2,2] / true_1
+print(paste("ratio between correct number of ones predicted and ture ones in testing data:", correct_ones_rate))
+print(paste("average ratio of correct_zeros_rate and correct_ones_rate:", (correct_zeros_rate + correct_ones_rate)/2))
+
+# KNN model
+library(class)
+
+# Train kNN models with  k= 5
+
+knn_model_15 <- knn(train = as.matrix(x_train), test = as.matrix(x_test), cl = y_train, k = 5)
+# Confusion matrix and misclassification error for k= 5
+conf_matrix_1 <- table(Predicted = knn_model_15, Actual = y_test)
+misclassification_rate_1 <- 1 - sum(diag(conf_matrix_1)) / sum(conf_matrix_1)
+print("Confusion Matrix for KNN model in which k=15:")
+print(conf_matrix_1)
+
+print(paste("Misclassification Error Rate for KNN model where k= 5:", misclassification_rate_1))
+correct_zeros_rate <- conf_matrix_1[1,1] / true_0
+print(paste("ratio between correct number of zeros predicted and ture zeros in testing data:", correct_zeros_rate))
+correct_ones_rate <- conf_matrix_1[2,2] / true_1
+print(paste("ratio between correct number of ones predicted and ture ones in testing data:", correct_ones_rate))
+print(paste("average ratio of correct_zeros_rate and correct_ones_rate:", (correct_zeros_rate + correct_ones_rate)/2))
+
+```
+
+
+Model Group3: Remove deltas in which the left and right are the same, also remove deltas in which left and right contrast are zero. Which means remove all deltas that equals 0. 
+
+
+  Same as in model group1 and 2, I tried three prediction models, logistic model, linear discrimination model, and k nearest neighbors model. Fitted the prior probability for 0s and 1s from training data. 
+  
+   The detailed information are as followed 
+  
+   Logistic model(misclassification rate: 0.210144927536232):
+   
+   [1] "ratio between correct number of zeros predicted and ture zeros in testing data: 0.09375"
+   
+   [1] "ratio between correct number of ones predicted and ture ones in testing data: 1"
+   
+   [1] "average ratio of correct_zeros_rate and correct_ones_rate: 0.546875"
+   
+   lda(misclassification rate: 0.231884057971015):
+   
+   [1] "ratio between correct number of zeros predicted and ture zeros in testing data: 0"
+   
+   [1] "ratio between correct number of ones predicted and ture ones in testing data: 1"
+   
+   [1] "average ratio of correct_zeros_rate and correct_ones_rate: 0.5"
+   
+   knn(misclassification rate: 0.340579710144927):
+   
+   [1] "ratio between correct number of zeros predicted and ture zeros in testing data: 0.0625"
+   
+   [1] "ratio between correct number of ones predicted and ture ones in testing data: 0.839622641509434"
+
+   [1] "average ratio of correct_zeros_rate and correct_ones_rate: 0.451061320754717"
+
+   
+```{r}
+# test if the number of spks when a correct feedback type is carried out is different from the number of spks when a incorrect feedback is carried out
+
+spks3 <- function(session_number, n = 1){
+  
+spks = spks_column_func(session_number)
+feedback_type = session[[session_number]]$feedback_type
+delta_contrast = abs(session[[session_number]]$contrast_right - session[[session_number]]$contrast_left)
+
+list_1 = c()
+list_1_spks = c()
+delta_list_1 = c()
+list_neg1 = c()
+list_neg1_spks = c()
+delta_list_neg1 = c()
+
+
+for (i in seq_along(feedback_type)){
+
+  if (feedback_type[i] == 1){
+    if (delta_contrast[i] != 0){
+      list_1 = c(list_1, feedback_type[i])
+      list_1_spks = c(list_1_spks, spks[i])
+      delta_list_1 = c(delta_list_1, delta_contrast[i])}
+  }
+  
+  else if(feedback_type[i] == -1){
+    if (delta_contrast[i] != 0){
+      list_neg1 = c(list_neg1, feedback_type[i])
+      list_neg1_spks = c(list_neg1_spks, spks[i])
+      delta_list_neg1 = c(delta_list_neg1, delta_contrast[i])}
+  }
+}
+
+
+
+if (n == "t_test_result"){
+print(t_test_result)
+}
+
+if (n == "average_correct_spks"){
+  return(average_correct_spks)
+}
+
+
+if (n == "average_incorrect_spks"){
+  return(average_incorrect_spks)
+}
+
+
+if (n == "correct_spks_and_feedback_table"){
+  x<- tibble(spks = list_1_spks, delta_contrast = delta_list_1, type = list_1)
+  return(x)}
+
+if (n == "incorrect_spks_and_feedback_table"){
+    x<- tibble(spks = list_neg1_spks, delta_contrast = delta_list_neg1, type = list_neg1)
+  return(x)}}
+
+```
+
+```{r}
+
+correct_list_training <- c() %>% as_tibble
+incorrect_list_training <- c() %>% as_tibble
+  
+for (i in c(1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18)){
+  correct <- spks3(i, "correct_spks_and_feedback_table")
+  correct_list_training <- bind_rows(correct_list_training, correct)
+  
+  incorrect <- spks3(i, "incorrect_spks_and_feedback_table")
+  incorrect_list_training <- bind_rows(incorrect_list_training, incorrect) 
+}
+
+training_data <- bind_rows(correct_list_training, incorrect_list_training)
+training_data <- training_data %>%
+  mutate_all(replace_minus_one_with_zero)
+
+##
+correct_list_predicting <- c() %>% as_tibble
+incorrect_list_predicting <- c() %>% as_tibble
+
+for (i in c(19, 20)){
+  correct <- spks3(i, "correct_spks_and_feedback_table")
+  correct_list_predicting <- bind_rows(correct_list_predicting, correct)
+  
+  incorrect <- spks3(i, "incorrect_spks_and_feedback_table")
+  incorrect_list_predicting <- bind_rows(incorrect_list_predicting, incorrect) 
+}
+
+predicting_data <- bind_rows(correct_list_predicting, incorrect_list_predicting)
+predicting_data <- predicting_data %>%
+  mutate_all(replace_minus_one_with_zero)
+
+x_train <- tibble(spks = training_data$spks, delta_contrast = training_data$delta_contrast)
+y_train <- training_data$type
+
+x_test <- tibble(spks = predicting_data$spks, delta_contrast = predicting_data$delta_contrast)
+y_test <- predicting_data$type
+
+sum_1 = sum(training_data$type == 1)
+sum_0 = sum(training_data$type == 0)
+
+prior_prob_1 = sum_1 / (sum_1 + sum_0)
+prior_prob_0 = sum_0 / (sum_1 + sum_0)
+prior_prob_0
+prior_prob_1
+
+true_0 <- sum(predicting_data$type == 0)
+true_1 <- sum(predicting_data$type == 1)
+
+# Logistic model
+logistic_model1 <- glm(type ~ spks + delta_contrast, family = binomial, data = training_data)
+summary(logistic_model1)
+
+logistic_predictions1 <- predict(logistic_model1, newdata = x_test)
+
+predicted_labels1 <- ifelse(logistic_predictions1 > prior_prob_1, "1", "0")
+
+confusion_matrix <- table(predicted_labels1, y_test)
+
+print("Confusion Matrix for Logistic model:")
+print(confusion_matrix)
+
+misclassification_rate <- 1 - sum(diag(confusion_matrix)) / sum(confusion_matrix)
+print(paste("Misclassification Error Rate for logistic model:", misclassification_rate))
+correct_zeros_rate <- confusion_matrix[1,1] / true_0
+print(paste("ratio between correct number of zeros predicted and ture zeros in testing data:", correct_zeros_rate))
+correct_ones_rate <- confusion_matrix[2,2] / true_1
+print(paste("ratio between correct number of ones predicted and ture ones in testing data:", correct_ones_rate))
+print(paste("average ratio of correct_zeros_rate and correct_ones_rate:", (correct_zeros_rate + correct_ones_rate)/2))
+
+# lda model
+library(MASS)
+
+lda_model <- lda(type ~ spks + delta_contrast, data = training_data, prior = c(prior_prob_0, prior_prob_1))
+
+lda_predictions <- predict(lda_model, newdata = x_test)
+class_means <- as.data.frame(lda_model$means)
+
+
+confusion_matrix <- table(lda_predictions$class, y_test)
+
+print("Confusion Matrix for lda model:")
+print(confusion_matrix)
+
+misclassification_rate <- 1 - sum(diag(confusion_matrix)) / sum(confusion_matrix)
+print(paste("Misclassification Error Rate for lda model:", misclassification_rate))
+correct_zeros_rate <- confusion_matrix[1,1] / true_0
+print(paste("ratio between correct number of zeros predicted and ture zeros in testing data:", correct_zeros_rate))
+correct_ones_rate <- confusion_matrix[2,2] / true_1
+print(paste("ratio between correct number of ones predicted and ture ones in testing data:", correct_ones_rate))
+print(paste("average ratio of correct_zeros_rate and correct_ones_rate:", (correct_zeros_rate + correct_ones_rate)/2))
+
+# KNN model
+# I chose K= 5 for knn clustering, as after going through multiple attempts, I found that it was the ideal k number which lowers down the misclassification rate, while maintaining the ability to make predictions of zeros, rather than generating purely ones.
+
+library(class)
+
+# Train kNN models with  k=15
+knn_model_15 <- knn(train = as.matrix(x_train), test = as.matrix(x_test), cl = y_train, k = 5)
+# Confusion matrix and misclassification error for k=15
+conf_matrix_1 <- table(Predicted = knn_model_15, Actual = y_test)
+misclassification_rate_1 <- 1 - sum(diag(conf_matrix_1)) / sum(conf_matrix_1)
+print("Confusion Matrix for KNN model in which k=15:")
+print(conf_matrix_1)
+print(paste("Misclassification Error Rate for KNN model where k=5:", misclassification_rate_1))
+correct_zeros_rate <- conf_matrix_1[1,1] / true_0
+print(paste("ratio between correct number of zeros predicted and ture zeros in testing data:", correct_zeros_rate))
+correct_ones_rate <- conf_matrix_1[2,2] / true_1
+print(paste("ratio between correct number of ones predicted and ture ones in testing data:", correct_ones_rate))
+print(paste("average ratio of correct_zeros_rate and correct_ones_rate:", (correct_zeros_rate + correct_ones_rate)/2))
+
+
+
+```
+
+
+# Section 6 Further Discussions on choice of models
+
+  Briefly summarize what I did till now:
+
+  For this project, after the exploration of data, I integrated data of spks, delta_RL(the absolute difference between left and right contrast between each trial) and feedback_type, and using spks and delta_RL as predictors to predict the feedback_type. 
+
+  I had three different model groups, and I fitted three types of model, namely logistic regression, lda and knn for each group. For each group, while all other factors remain the same, different criteria for filtering delta_RLs werre applied. For group1, delta_RL are what straight extracted from original data. For group2, delta_RL got rid of the case in  which right and left contrast are equal but not both equal to zero in order to avoid potential noises and improve model performance. For the same purpose, I further removed the case in which both left and right contrast equals zero on the basis of model 2, and named it as model 3. 
+  
+  The central purpose for this discussion was to find a trade-off between achieving a low misclassification rate and maintaining a balanced correct prediction rate for both 0s and 1s. As what was mentioned at the start of section 5, in order to delve deeper into evaluating the results, I computed the ratio between the accurately predicted number of zeros and the actual number of zeros in the testing dataset, as well as the ratios for ones. This approach was taken to ensure that the model's performance wasn't solely judged based on its ability to predict one outcome, but rather on its proficiency in predicting both zeros and ones. While this provided valuable insights, it became apparent during subsequent model analyses that using these measurements to select models posed challenges. Each model yielded two values, and one model could excel in one aspect while lagging behind in the other. Hence, it became imperative to establish a unique criterion, represented by a single value, that could uniformly assess all model performances.
+  
+  After careful consideration, I chose to utilize the average ratio of correctly predicted ones and zeros relative to their respective true counts in the testing data ((correct_zeros_rate + correct_ones_rate)/2). This decision was driven by the desire to consolidate both ratios into a single value, enabling straightforward comparisons across different models. Moreover, this metric effectively gauges model performance by emphasizing the necessity of accurately predicting both zeros and ones. For instance, a ratio close to 0.5, indicative of balanced predictions for zeros and ones, would be surpassed by a model with a higher overall ratio, even if its prediction for one category was slightly less accurate, as long as it compensated by accurately predicting the other category.
+  
+ Since I found that the logistic model in model group 1 generates the highest value of such a ratio, I would choose that as my final model. 
+  
+   Model Information:
+   
+   Logistic model(misclassification rate: 0.345):
+   
+   [1] "ratio between correct number of zeros predicted and ture zeros in testing data: 0.454545454545455"
+   
+   [1] "ratio between correct number of ones predicted and ture ones in testing data: 0.731034482758621"
+   
+   [1] "average ratio of correct_zeros_rate and correct_ones_rate: 0.592789968652038"
+   
+   lines 687-718
+
+# Github repo link: https://github.com/zcrnf/the-sta-141a-course-project.git
+
+# Reference {-}
+Steinmetz, N.A., Zatka-Haas, P., Carandini, M. et al. Distributed coding of choice, action and engagement across the mouse brain. Nature 576, 266–273 (2019). https://doi.org/10.1038/s41586-019-1787-x
+
+
